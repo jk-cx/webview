@@ -751,6 +751,12 @@ using browser_engine = cocoa_wkwebview_engine;
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 
+// additional include ************************************************************************
+#include <wrl.h>
+#include "atlstr.h"
+#include <codecvt>
+// *******************************************************************************************
+
 namespace webview {
 
 using msg_cb_t = std::function<void(const std::string)>;
@@ -770,9 +776,8 @@ public:
 // EdgeHTML browser engine
 //
 using namespace winrt;
-using namespace Windows::Foundation;
-using namespace Windows::Web::UI;
-using namespace Windows::Web::UI::Interop;
+using namespace winrt::Windows::Web::UI;
+using namespace winrt::Windows::Web::UI::Interop;
 
 class edge_html : public browser {
 public:
@@ -780,8 +785,8 @@ public:
     init_apartment(winrt::apartment_type::single_threaded);
     auto process = WebViewControlProcess();
     auto op = process.CreateWebViewControlAsync(reinterpret_cast<int64_t>(wnd),
-                                                Rect());
-    if (op.Status() != AsyncStatus::Completed) {
+												winrt::Windows::Foundation::Rect());
+    if (op.Status() != winrt::Windows::Foundation::AsyncStatus::Completed) {
       handle h(CreateEvent(nullptr, false, false, nullptr));
       op.Completed([h = h.get()](auto, auto) { SetEvent(h); });
       HANDLE hs[] = {h.get()};
@@ -810,7 +815,7 @@ public:
     if (html != "") {
       m_webview.NavigateToString(winrt::to_hstring(html));
     } else {
-      Uri uri(winrt::to_hstring(url));
+		winrt::Windows::Foundation::Uri uri(winrt::to_hstring(url));
       m_webview.Navigate(uri);
     }
   }
@@ -830,7 +835,7 @@ public:
     }
     RECT r;
     GetClientRect(wnd, &r);
-    Rect bounds(r.left, r.top, r.right - r.left, r.bottom - r.top);
+	winrt::Windows::Foundation::Rect bounds(r.left, r.top, r.right - r.left, r.bottom - r.top);
     m_webview.Bounds(bounds);
   }
 
@@ -866,6 +871,20 @@ public:
       DispatchMessage(&msg);
     }
     init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}");
+	// quick and dirty fix for message cb ********************************************************
+	EventRegistrationToken token;
+	m_webview->add_WebMessageReceived(Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+		[cb] (ICoreWebView2* webview, ICoreWebView2WebMessageReceivedEventArgs * args) -> HRESULT
+	{
+		PWSTR message;
+		args->TryGetWebMessageAsString(&message);
+		std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
+		cb(converter.to_bytes(std::wstring{message}));
+		webview->PostWebMessageAsString(message);
+		CoTaskMemFree(message);
+		return S_OK;
+	}).Get(), &token);
+	// *******************************************************************************************
     return true;
   }
 
@@ -880,7 +899,7 @@ public:
 
   void navigate(const std::string url) override {
     auto wurl = to_lpwstr(url);
-    m_webview->Navigate(wurl);
+	m_webview->Navigate(wurl);
     delete[] wurl;
   }
 
@@ -895,7 +914,7 @@ public:
     m_webview->ExecuteScript(wjs, nullptr);
     delete[] wjs;
   }
-
+   
 private:
   LPWSTR to_lpwstr(const std::string s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, NULL, 0);
@@ -1059,7 +1078,7 @@ public:
   void navigate(const std::string url) { m_browser->navigate(url); }
   void eval(const std::string js) { m_browser->eval(js); }
   void init(const std::string js) { m_browser->init(js); }
-
+   
 private:
   virtual void on_message(const std::string msg) = 0;
 
